@@ -4,7 +4,7 @@
 #include <elf.h>
 
 int main(int argc, char *argv[]) {
-    if(argc != 2) {
+    if(argc != 3) {
         fprintf(stderr, "please provide the target executable path aswell as the output file path\n");
         return EXIT_FAILURE;
     }
@@ -21,9 +21,9 @@ int main(int argc, char *argv[]) {
     Elf64_Ehdr elf_header;
     fread(&elf_header, 1, sizeof(Elf64_Ehdr), elf_file);
 
-    Elf64_Shdr section_headers[elf_header.e_phnum];
-    fseek(elf_file, elf_header.e_shoff + elf_header.e_shstrndx * sizeof(Elf64_Shdr), SEEK_SET);
-    fread(&section_headers, sizeof(Elf64_Shdr), elf_header.e_phnum, elf_file);
+    Elf64_Shdr section_headers[elf_header.e_shnum];
+    fseek(elf_file, elf_header.e_shoff, SEEK_SET);
+    fread(section_headers, sizeof(Elf64_Shdr), elf_header.e_shnum, elf_file);
 
     Elf64_Shdr strtab_header = section_headers[elf_header.e_shstrndx];
     char *section_names = malloc(strtab_header.sh_size);
@@ -64,20 +64,35 @@ int main(int argc, char *argv[]) {
     fread(symbols, 1, symtab_section_header.sh_size, elf_file);
     int symbol_count = symtab_section_header.sh_size / sizeof(Elf64_Sym);
 
-    // Iterate through symbols to find function entry points
+    int extra_bytes = 0;
+    const char payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
+
+    // Find function entry points
     for (int i = 0; i < symbol_count; i++) {
         if (ELF64_ST_TYPE(symbols[i].st_info) == STT_FUNC) {
-            // Get the address of the function
             Elf64_Addr func_address = symbols[i].st_value;
-            // Calculate the end address of the function
             Elf64_Addr end_address = func_address + symbols[i].st_size;
-            // Move file pointer to the end of the function
-            fseek(elf_file, text_section_header.sh_offset + end_address, SEEK_SET);
-            // Write your bytes here
-            unsigned char bytes_to_write[] = {0x90, 0x90}; // Example bytes (NOP instructions)
-            fwrite(bytes_to_write, sizeof(bytes_to_write), 1, elf_file);
+
+            // update section header size
+            Elf64_Off func_end_offset = text_section_header.sh_offset + end_address;
+            fseek(elf_file, elf_header.e_shoff + i * sizeof(Elf64_Shdr), SEEK_SET);
+            Elf64_Shdr func_section_header;
+            fread(&func_section_header, sizeof(Elf64_Shdr), 1, elf_file);
+            func_section_header.sh_size += sizeof(payload);
+            fseek(elf_file, elf_header.e_shoff + i * sizeof(Elf64_Shdr), SEEK_SET);
+            fwrite(&func_section_header, sizeof(Elf64_Shdr), 1, elf_file);
+
+            fseek(elf_file, func_end_offset, SEEK_SET);
+            fwrite(payload, sizeof(payload), 1, elf_file);
+
+            extra_bytes += sizeof(payload);
         }
     }
+
+    // update header with correct sizes
+    elf_header.e_shoff += extra_bytes;
+    fseek(elf_file, 0, SEEK_SET);
+    fwrite(&elf_header, sizeof(Elf64_Ehdr), 1, elf_file);
 
     fclose(elf_file);
     free(section_names);
