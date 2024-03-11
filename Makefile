@@ -1,9 +1,13 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -ggdb
 
-all: censor
+all: src/payload.s censor
 
-censor: src/*
-	$(CC) $(CFLAGS) src/* -o censor
+censor: src/main.c src/elf.*
+	$(CC) $(CFLAGS) src/main.c src/elf.* -o censor
 
-.PHONY: all censor
+src/payload.s: src/payload.c
+	$(CC) -S src/payload.c -o src/payload.s
+
+
+.PHONY: all

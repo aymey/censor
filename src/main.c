@@ -1,15 +1,32 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <string.h>
 #include <elf.h>
 
+// const char payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
 int main(int argc, char *argv[]) {
-    if(argc != 3) {
-        fprintf(stderr, "please provide the target executable path aswell as the output file path\n");
+    if(argc < 2) {
+        fprintf(stderr, "please provide the target executable path\n");
         return EXIT_FAILURE;
     }
     const char *executable_path = argv[1];
     const char *output_path = argv[2];
+
+    int pfd = open("payload.s", O_RDONLY);
+    if(pfd == -1) {
+        perror("Error opening payload");
+        return EXIT_FAILURE;
+    }
+    off_t payload_size = lseek(pfd, 0, SEEK_END);
+    void *payload = mmap(NULL, payload_size, PROT_READ, MAP_PRIVATE, pfd, 0);
+    if(payload == MAP_FAILED) {
+        perror("Error mapping payload into memory");
+        return EXIT_FAILURE;
+    }
+    close(pfd);
 
     FILE *elf_file = fopen(executable_path, "r+b");
     if(!elf_file) {
@@ -65,10 +82,23 @@ int main(int argc, char *argv[]) {
 
     for(int i = 0; i < symbol_amount; i++) {
         if(ELF64_ST_TYPE(symbols[i].st_info) == STT_FUNC) {
-            printf("%d\n", symbols[i].st_name);
+            Elf64_Off start = text->sh_offset + symbols[i].st_value;
+            Elf64_Off end = start + symbols[i].st_size;
+
+            // start
+            fseek(elf_file, start, SEEK_SET);
+            fwrite(payload, sizeof(payload), 1, elf_file);
+
+            // end
+            fseek(elf_file, end, SEEK_SET);
+            fwrite(payload, sizeof(payload), 1, elf_file);
         }
     }
 
     fclose(elf_file);
+    if(munmap(payload, payload_size) == -1) {
+        perror("Error unmapping payload");
+        return EXIT_FAILURE;
+    }
     return EXIT_SUCCESS;
 }
