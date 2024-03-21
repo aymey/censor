@@ -5,8 +5,10 @@
 #include <unistd.h>
 #include <string.h>
 #include <elf.h>
+#include <assert.h>
 
-// const char payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
+const char payload[] = {0x90};
+
 int main(int argc, char *argv[]) {
     if(argc < 2) {
         fprintf(stderr, "please provide the target executable path\n");
@@ -15,20 +17,20 @@ int main(int argc, char *argv[]) {
     const char *executable_path = argv[1];
     const char *output_path = argv[2];
 
-    int pfd = open("payload.s", O_RDONLY);
-    if(pfd == -1) {
-        perror("Error opening payload");
-        return EXIT_FAILURE;
-    }
-    off_t payload_size = lseek(pfd, 0, SEEK_END);
-    void *payload = mmap(NULL, payload_size, PROT_READ, MAP_PRIVATE, pfd, 0);
-    if(payload == MAP_FAILED) {
-        perror("Error mapping payload into memory");
-        return EXIT_FAILURE;
-    }
-    close(pfd);
+    // int pfd = open("payload.s", O_RDONLY);
+    // if(pfd == -1) {
+    //     perror("Error opening payload");
+    //     return EXIT_FAILURE;
+    // }
+    // off_t payload_size = lseek(pfd, 0, SEEK_END);
+    // void *payload = mmap(NULL, payload_size, PROT_READ, MAP_PRIVATE, pfd, 0);
+    // if(payload == MAP_FAILED) {
+    //     perror("Error mapping payload into memory");
+    //     return EXIT_FAILURE;
+    // }
+    // close(pfd);
 
-    FILE *elf_file = fopen(executable_path, "r+b");
+    FILE *elf_file = fopen(executable_path, "a+");
     if(!elf_file) {
         perror("Error opening executable");
         return EXIT_FAILURE;
@@ -48,12 +50,10 @@ int main(int argc, char *argv[]) {
 
     Elf64_Shdr *text = NULL;
     for(int i = 0; i < elf_header.e_shnum; i++) {
-        if(section_headers[i].sh_type == SHT_PROGBITS &&
-                section_headers[i].sh_flags & SHF_EXECINSTR) {
-            if(strcmp(section_names + section_headers[i].sh_name, ".text") == 0) {
+        if((section_headers[i].sh_type == SHT_PROGBITS && section_headers[i].sh_flags & SHF_EXECINSTR) &&
+                strcmp(section_names + section_headers[i].sh_name, ".text") == 0) {
                 text = &section_headers[i];
                 break;
-            }
         }
     }
 
@@ -92,13 +92,23 @@ int main(int argc, char *argv[]) {
             // end
             fseek(elf_file, end, SEEK_SET);
             fwrite(payload, sizeof(payload), 1, elf_file);
+
+            // update sizes (physically done after)
+            text->sh_size += sizeof payload;
         }
     }
 
+    // update sizes
+    FILE *new_elf_file = fopen(executable_path, "r+b");
+    assert(new_elf_file);
+    fseek(elf_file, text->sh_offset, SEEK_SET);
+    fwrite(text, sizeof(*text), 1, elf_file);
+    fclose(new_elf_file);
+
     fclose(elf_file);
-    if(munmap(payload, payload_size) == -1) {
-        perror("Error unmapping payload");
-        return EXIT_FAILURE;
-    }
+    // if(munmap(payload, payload_size) == -1) {
+    //     perror("Error unmapping payload");
+    //     return EXIT_FAILURE;
+    // }
     return EXIT_SUCCESS;
 }
